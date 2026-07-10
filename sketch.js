@@ -1,9 +1,21 @@
 // sketch.js の一番上に貼り付け
 
+// ⭕ 開いた瞬間に名前（または被験者番号）を入力してもらう仕組み
 if (typeof userId === 'undefined') {
-  var userId = localStorage.getItem('experiment_user_id'); // 💡Lを小文字に修正
+  var userId = localStorage.getItem('experiment_user_id'); 
+  
   if (!userId) {
-    userId = 'user_' + Math.random().toString(36).substring(2, 15);
+    // 💡 画面に文字の入力欄（ポップアップ）を表示します
+    let inputName = prompt("【実験用】あなたの「お名前」または「被験者番号」を入力してください：\n（例：佐藤、Aさん、学籍番号など）");
+    
+    // もし何も入力されなかったりキャンセルされたら、ランダムなIDを予備で作る
+    if (inputName === null || inputName.trim() === "") {
+      userId = 'user_' + Math.random().toString(36).substring(2, 15);
+    } else {
+      // 💡 入力された名前の前に「user_」をつけてIDにする（スペースなどは自動削除）
+      userId = 'user_' + inputName.trim().replace(/\s+/g, '_');
+    }
+    
     localStorage.setItem('experiment_user_id', userId);
   }
 }
