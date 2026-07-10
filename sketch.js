@@ -1,615 +1,1012 @@
-//------------------------------------------------------
-// 画面状態
-//------------------------------------------------------
-let screen = "input"; 
+// sketch.js の一番上に貼り付け
 
+if (typeof userId === 'undefined') {
+  var userId = localStorage.getItem('experiment_user_id'); // 💡Lを小文字に修正
+  if (!userId) {
+    userId = 'user_' + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('experiment_user_id', userId);
+  }
+}
 //------------------------------------------------------
-// 月選択ドロップダウン
+// 画面状態 & 選択月 & スクロール制御
 //------------------------------------------------------
-let currentMonthSelect;
-let compareMonthSelect;
+var currentScreen = "input"; 
+var selectedCurrentMonth = 5;  // 2026年 5月
+var selectedCompareMonth = 6;  // 2026年 6月
 
-//------------------------------------------------------
-// 月ごとのデータ（ユーザー入力のみ）
-//------------------------------------------------------
+// スクロール用変数
+let rightPanelScrollY = 0;     // 入力画面：右側リストのスクロール位置
+let rightPanelMaxScroll = 0;   // 右側リストの最大スクロール量
+let mainCanvasScrollY = 0;     // 可視化・比較画面：キャンバス全体のスクロール位置
+const CANVAS_VIRTUAL_HEIGHT = 1200; // 可視化エリアの仮想的な総高さ
+
+// データ構造
 let monthlyData = {
   1: [], 2: [], 3: [], 4: [], 5: [], 6: [],
   7: [], 8: [], 9: [], 10: [], 11: [], 12: []
 };
 
-// 現在選択中の月
-let selectedCurrentMonth = 5;   // デフォルト：5月
-let selectedCompareMonth = 6;   // デフォルト：6月
-
-//------------------------------------------------------
-// 入力画面のUIパーツ
-//------------------------------------------------------
-let nameInput, amountInput, categoryInput;
-let satisInput, regretInput, valueInput;
-let addButton;
-
-//------------------------------------------------------
-// 可視化用
-//------------------------------------------------------
+// バブル・ドラッグ用
 let bubbles = [];
 let draggingBubble = null;
 
-//------------------------------------------------------
-// タブ
-//------------------------------------------------------
+// タブ情報
 let tabs = [
   { id: "input", label: "支出入力" },
   { id: "visual", label: "可視化" },
   { id: "compare", label: "月別比較" }
 ];
 
+// ★日本語全角入力対策：Figmaの枠の上に完全に重ねるHTML要素
+let overlayNameInput;
+let overlayAmountInput;
+
+// 自作入力フォームの状態
+let selectedCategory = "交通費";
+let categoryDropdownOpen = false;
+let currentMonthDropdownOpen = false;
+let compareMonthDropdownOpen = false;
+
+// 1〜5のボタン状態
+let selectedSatis = 3;
+let selectedRegret = 3;
+let selectedValueMatch = 3;
+
 //------------------------------------------------------
 // setup()
 //------------------------------------------------------
 function setup() {
-  createCanvas(1200, 700);
-  colorMode(HSB);
+  let canvasElement = createCanvas(1280, 720);
+  canvasElement.parent(document.body);
+  document.body.style.position = "relative";
+
+  colorMode(RGB, 255, 255, 255, 255);
   textFont("sans-serif");
 
-  setupInputUI();
-  setupMonthSelectors();   // ★ 月選択ドロップダウン
-  updateInputVisibility();
-}
+  // ★項目名入力ボックス
+  overlayNameInput = createInput("深夜タクシー");
+  overlayNameInput.position(30, 190);
+  overlayNameInput.size(370 - 24, 40 - 2); 
+  setupInputStyle(overlayNameInput);
 
-//------------------------------------------------------
-// 入力画面 UI の生成
-//------------------------------------------------------
-function setupInputUI() {
-  nameInput = createInput();
-  nameInput.position(60, 150);
-  nameInput.size(200);
-  nameInput.attribute("placeholder", "項目名");
+  // ★金額入力ボックス（タイピング中の制限を解除し、全角入力を許可）
+  overlayAmountInput = createInput("3200");
+  overlayAmountInput.position(30, 280);
+  overlayAmountInput.size(175 - 24, 40 - 2);
+  setupInputStyle(overlayAmountInput);
+  
+  // 初期ダミーデータ
+  monthlyData[5] = [
+    { id: "d1", name: "深夜タクシー", amount: 3200, category: "交通費", satis: 3, regret: 3, value_match: 3 },
+    { id: "d2", name: "専門書籍", amount: 2880, category: "教育", satis: 5, regret: 1, value_match: 5 },
+    { id: "d3", name: "衝動買いシャツ", amount: 4500, category: "衣類", satis: 1, regret: 5, value_match: 1 },
+    { id: "d4", name: "ジム月会費", amount: 8000, category: "医療", satis: 4, regret: 2, value_match: 5 },
+    { id: "d5", name: "高級カフェランチ", amount: 2500, category: "食費", satis: 4, regret: 4, value_match: 2 },
+    { id: "d6", name: "サブスク動画会費", amount: 1480, category: "娯楽", satis: 5, regret: 1, value_match: 4 }
+  ];
 
-  amountInput = createInput();
-  amountInput.position(60, 190);
-  amountInput.size(200);
-  amountInput.attribute("placeholder", "金額");
+  const saved = localStorage.getItem("kakeiboData_figma_overlay_v2");
+  if (saved) {
+    let parsed = JSON.parse(saved);
+    for (let m = 1; m <= 12; m++) {
+      if (parsed[m]) monthlyData[m] = parsed[m];
+    }
+  }
 
-  categoryInput = createSelect();
-  categoryInput.position(60, 230);
-  ["食費","娯楽","衣類","医療","交通費","教育","飲料","その他"]
-    .forEach(c => categoryInput.option(c));
-
-  satisInput = createSelect();
-  satisInput.position(60, 270);
-  for (let i = 1; i <= 5; i++) satisInput.option(i);
-
-  regretInput = createSelect();
-  regretInput.position(60, 310);
-  for (let i = 1; i <= 5; i++) regretInput.option(i);
-
-  valueInput = createSelect();
-  valueInput.position(60, 350);
-  for (let i = 1; i <= 5; i++) valueInput.option(i);
-
-  addButton = createButton("追加して可視化へ");
-  addButton.position(60, 390);
-  addButton.mousePressed(onAddRecord);
-}
-
-//------------------------------------------------------
-// 月選択ドロップダウン
-//------------------------------------------------------
-function setupMonthSelectors() {
-  // 現在の月
-  currentMonthSelect = createSelect();
-  currentMonthSelect.position(180, 35);
-  for (let m = 1; m <= 12; m++) currentMonthSelect.option(m + "月", m);
-  currentMonthSelect.selected(selectedCurrentMonth);
-
-  currentMonthSelect.changed(() => {
-    selectedCurrentMonth = Number(currentMonthSelect.value());
-    buildBubblesFromCurrent();
-  });
-
-  // 比較対象の月
-  compareMonthSelect = createSelect();
-  compareMonthSelect.position(1000, 110);
-  for (let m = 1; m <= 12; m++) compareMonthSelect.option(m + "月", m);
-  compareMonthSelect.selected(selectedCompareMonth);
-
-  compareMonthSelect.changed(() => {
-    selectedCompareMonth = Number(compareMonthSelect.value());
-  });
-
-  // 比較画面以外では非表示
-  currentMonthSelect.style("display", "none");
-  compareMonthSelect.style("display", "none");
-}
-
-//------------------------------------------------------
-// 入力 UI の表示/非表示
-//------------------------------------------------------
-function updateInputVisibility() {
-  const visible = (screen === "input");
-  const disp = visible ? "block" : "none";
-
-  nameInput.style("display", disp);
-  amountInput.style("display", disp);
-  categoryInput.style("display", disp);
-  satisInput.style("display", disp);
-  regretInput.style("display", disp);
-  valueInput.style("display", disp);
-  addButton.style("display", disp);
-
-  // 月選択は比較画面のみ表示
-  // 現在の月セレクトは常に表示
-currentMonthSelect.style("display", "block");
-
-// 比較対象の月は比較画面のみ
-if (screen === "compare") {
-  compareMonthSelect.style("display", "block");
-} else {
-  compareMonthSelect.style("display", "none");
-}
-}
-
-//------------------------------------------------------
-// 支出追加（ユーザー入力 → 選択中の月に保存）
-//------------------------------------------------------
-function onAddRecord() {
-  const r = {
-    name: nameInput.value() || "未入力",
-    amount: Number(amountInput.value()) || 0,
-    category: categoryInput.value(),
-    satis: Number(satisInput.value()),
-    regret: Number(regretInput.value()),
-    value_match: Number(valueInput.value())
-  };
-
-  // ★ 選択中の月に保存
-  monthlyData[selectedCurrentMonth].push(r);
+  for (let m in monthlyData) {
+    monthlyData[m].forEach(r => {
+      if (!r.id) r.id = "id_" + Math.random().toString(36).substr(2, 9);
+    });
+  }
 
   buildBubblesFromCurrent();
-  screen = "visual";
+  canvas.oncontextmenu = () => false;
+  
   updateInputVisibility();
 }
 
+function setupInputStyle(inputEl) {
+  inputEl.style('background', 'transparent');
+  inputEl.style('border', 'none');
+  inputEl.style('outline', 'none');
+  inputEl.style('color', '#ffffff');
+  inputEl.style('font-family', 'sans-serif');
+  inputEl.style('font-size', '14px');
+  inputEl.style('padding-left', '12px');
+  inputEl.style('padding-right', '12px');
+  inputEl.style('box-sizing', 'border-box');
+}
+
+function updateInputVisibility() {
+  if (currentScreen === "input") {
+    overlayNameInput.show();
+    overlayAmountInput.show();
+  } else {
+    overlayNameInput.hide();
+    overlayAmountInput.hide();
+  }
+}
+
 //------------------------------------------------------
-// バブル生成（選択中の月のデータから）
+// バブル生成
 //------------------------------------------------------
 function buildBubblesFromCurrent() {
   bubbles = [];
-  const data = monthlyData[selectedCurrentMonth];
+  const data = monthlyData[selectedCurrentMonth] || [];
+  const savedPositions = JSON.parse(localStorage.getItem("bubblePositionsFigmaOverlay_v2")) || {};
 
-  if (data.length === 0) return;
-
-  const cx = 450;
-  const cy = 380;
-  const radiusBase = 180;
+  const cx = 450; 
+  const cy = 400; 
 
   for (let i = 0; i < data.length; i++) {
     const r = data[i];
-    const angle = map(i, 0, data.length, 0, TWO_PI);
-    const distR = radiusBase + random(-40, 40);
+    let seed = 0;
+    for (let char of r.id) seed += char.charCodeAt(0);
+    
+    let angle = map(seed % 100, 0, 100, 0, TWO_PI);
+    let distR = 120 + (seed % 3 * 45);
 
-    const x = cx + cos(angle) * distR;
-    const y = cy + sin(angle) * distR;
+    let x = cx + cos(angle) * distR;
+    let y = cy + sin(angle) * distR;
 
-    const size = sqrt(r.amount) * 0.8 + 40;
+    if (savedPositions[r.id]) {
+      x = savedPositions[r.id].x;
+      y = savedPositions[r.id].y;
+    }
 
-    const shape = generateShape(size, r.value_match);
+    let size = sqrt(r.amount) * 1.0 + 40;
+    if (r.amount >= 35000) size = 110; 
 
-    const hue = map(r.satis, 1, 5, 0, 120);
-    const alpha = map(r.regret, 1, 5, 60, 255);
+    let shape = generateShape(size, r.value_match);
+    let baseColor = getFigmaColor(r.satis, r.regret);
 
     bubbles.push({
-      x, y,
-      size,
-      hue,
-      alpha,
-      shape,
-      data: r,
-      dragging: false,
-      offsetX: 0,
-      offsetY: 0
+      id: r.id, x, y, size, baseColor, shape, data: r, offsetX: 0, offsetY: 0
     });
   }
 }
 
-//------------------------------------------------------
-// 正円 ↔ 四角形 補間形状
-//------------------------------------------------------
-function generateShape(size, match) {
-  let t = map(match, 1, 5, 0, 1); // 0=四角形, 1=円
-  let pts = [];
+function saveBubblePositions() {
+  let savedPositions = JSON.parse(localStorage.getItem("bubblePositionsFigmaOverlay_v2")) || {};
+  bubbles.forEach(b => {
+    if (b.id) savedPositions[b.id] = { x: b.x, y: b.y };
+  });
+  localStorage.setItem("bubblePositionsFigmaOverlay_v2", JSON.stringify(savedPositions));
+}
 
-  for (let a = 0; a < TWO_PI; a += 0.2) {
+function getFigmaColor(satis, regret) {
+  let c;
+  if (satis <= 2) c = color(255, 40, 60);       
+  else if (satis === 3) c = color(255, 180, 40); 
+  else c = color(30, 240, 100);                 
+
+  let factor = map(regret, 1, 5, 0.2, 1.0);
+  return lerpColor(color(115, 120, 135), c, factor);
+}
+
+function generateShape(size, match) {
+  let t = map(match, 1, 5, 0, 1); 
+  let pts = [];
+  for (let a = 0; a < TWO_PI; a += 0.08) { 
     let cx = cos(a) * size;
     let cy = sin(a) * size;
-
     let denom = max(abs(cos(a)), abs(sin(a)));
-    let sx = (cos(a) / denom) * size;
-    let sy = (sin(a) / denom) * size;
-
-    let x = lerp(sx, cx, t);
-    let y = lerp(sy, cy, t);
-
-    pts.push({ x, y });
+    let sx = (cos(a) / denom) * size * 0.88;
+    let sy = (sin(a) / denom) * size * 0.88;
+    pts.push({ x: lerp(sx, cx, t), y: lerp(sy, cy, t) });
   }
   return pts;
 }
+
 //------------------------------------------------------
-// 描画ループ
+// draw()
 //------------------------------------------------------
 function draw() {
-  background(18, 10, 10);
+  background(11, 11, 21); 
 
-  drawTopBar();
-  drawTabs();
-
-  if (screen === "input") drawInputScreen();
-  if (screen === "visual") drawVisualScreen();
-  if (screen === "compare") drawCompareScreen();
-}
-
-//------------------------------------------------------
-// 上部バー（タイトル・月）
-//------------------------------------------------------
-function drawTopBar() {
-  noStroke();
-  fill(18, 10, 20);
-  rect(0, 0, width, 70);
-
-  fill(0, 0, 100);
-  textSize(26);
-  textAlign(LEFT, CENTER);
-  text("家計簿", 30, 35);
-
-  fill(0, 0, 80);
-
-}
-
-//------------------------------------------------------
-// タブ描画
-//------------------------------------------------------
-function drawTabs() {
-  let x = 320;
-  let y = 20;
-  let w = 120;
-  let h = 30;
-
-  textAlign(CENTER, CENTER);
-  textSize(14);
-
-  for (let t of tabs) {
-    fill(screen === t.id ? 210 : 180, 30, 40);
-    rect(x, y, w, h, 6);
-
-    fill(0, 0, 100);
-    text(t.label, x + w / 2, y + h / 2);
-
-    t._x = x;
-    t._y = y;
-    t._w = w;
-    t._h = h;
-
-    x += w + 10;
-  }
-}
-
-//------------------------------------------------------
-// 支出入力画面
-//------------------------------------------------------
-function drawInputScreen() {
-  updateInputVisibility();
-
-  fill(0, 0, 90);
-  textAlign(LEFT, TOP);
-  textSize(18);
-  text("支出を入力", 50, 110);
-
-  drawRightSummaryPanel(monthlyData[selectedCurrentMonth], "今月の支出");
-}
-
-//------------------------------------------------------
-// 可視化画面
-//------------------------------------------------------
-function drawVisualScreen() {
-  updateInputVisibility();
-
-  // 左側（バブルエリア）
-  push();
-  translate(0, 70);
-  fill(18, 10, 15);
-  rect(0, 0, 850, height - 70);
-
-  fill(0, 0, 70);
-  textSize(14);
-  text("タグをドラッグして自由に配置できます", 150, 20);
-
-  // バブルを後悔度順に並べる（透明なものが後ろ）
-bubbles.sort((a, b) => a.data.regret - b.data.regret);
-
-for (let b of bubbles) {
-  // ふち（透明）
-  stroke(0, 0, 100, 30);
-  strokeWeight(1);
-
-  // 塗り（後悔度で透明度）
-  const alpha = map(b.data.regret, 1, 5, 10, 255);
-  fill(b.hue, 40, 90, alpha);
-
-  drawBubbleShape(b);
-
-  // テキスト
-  noStroke();
-  fill(0, 0, 10);
-  textAlign(CENTER, CENTER);
-  textSize(13);
-  text(
-    b.data.name + "\n¥" + b.data.amount + "\n" + b.data.category,
-    b.x, b.y
-  );
-}
- pop();   // ← ★ push の対応
-
-} 
-//------------------------------------------------------
-// 月別比較画面
-//------------------------------------------------------
-function drawCompareScreen() {
-  updateInputVisibility();
-
-  // ドロップダウン表示
-  currentMonthSelect.style("display", "block");
-  compareMonthSelect.style("display", "block");
-
-  fill(0, 0, 90);
-  textSize(14);
-  text("現在の月", 900, 90);
-  text("比較対象の月", 1000, 90);
-
-  // 左側（比較バブル）
-  push();
-  translate(0, 70);
-  fill(18, 10, 15);
-  rect(0, 0, 850, height - 70);
-
-  fill(0, 0, 80);
-  textSize(15);
-  text("月別比較（" + selectedCurrentMonth + "月 vs " + selectedCompareMonth + "月）", 150, 20);
-
-  let past = monthlyData[selectedCompareMonth];
-  let cur = monthlyData[selectedCurrentMonth];
-
-  // 過去月（薄く）
-  for (let i = 0; i < past.length; i++) {
-    const r = past[i];
-    const cx = 450 + cos(i) * 220;
-    const cy = 380 + sin(i) * 220;
-    const size = sqrt(r.amount) * 0.6 + 30;
-    const shape = generateShape(size, r.value_match);
-    const hue = map(r.satis, 1, 5, 0, 120);
-
-    const alphaPast = map(r.regret, 1, 5, 10, 120);
-
-    stroke(0, 0, 100, 120);
-    strokeWeight(1);
-    fill(hue, 60, 80, 80);
-    drawShapeAt(shape, cx, cy);
-
-    noStroke();
-    fill(0, 0, 10);
-    textAlign(CENTER, CENTER);
-    textSize(11);
-    text(r.name + "\n¥" + r.amount + "\n" + r.category, cx, cy);
-  }
-
-  // 今月（濃く）
-  for (let b of bubbles) {
-    stroke(0, 0, 100, 220);
+  if (currentScreen !== "input") {
+    stroke(25, 27, 48);
     strokeWeight(2);
-    fill(b.hue, 60, 90, 200);
-    drawBubbleShape(b);
-
-    noStroke();
-    fill(0, 0, 10);
-    textAlign(CENTER, CENTER);
-    textSize(12);
-    text(b.data.name + "\n¥" + b.data.amount + "\n" + b.data.category, b.x, b.y);
-  }
-
-  pop();
-
-  // 右側サマリー
-  drawCompareSummaryPanel();
-}
-
-//------------------------------------------------------
-// バブル描画
-//------------------------------------------------------
-function drawBubbleShape(b) {
-  beginShape();
-  for (let p of b.shape) vertex(b.x + p.x, b.y + p.y);
-  endShape(CLOSE);
-}
-
-function drawShapeAt(shape, x, y) {
-  beginShape();
-  for (let p of shape) vertex(x + p.x, y + p.y);
-  endShape(CLOSE);
-}
-
-//------------------------------------------------------
-// 右側サマリー（今月）
-//------------------------------------------------------
-function drawRightSummaryPanel(data, title) {
-  const x = 860, y = 70, w = 320, h = 260;
-
-  textAlign(LEFT, TOP);
-
-  fill(18, 10, 18);
-  rect(x, y, w, h, 10);
-
-  fill(0, 0, 90);
-  textSize(18);
-  text(title, x + 20, y + 20);
-
-  let total = data.reduce((s, r) => s + r.amount, 0);
-  let avgS = data.length ? (data.reduce((s, r) => s + r.satis, 0) / data.length).toFixed(1) : "-";
-  let avgV = data.length ? (data.reduce((s, r) => s + r.value_match, 0) / data.length).toFixed(1) : "-";
-
-  textSize(14);
-  let yy = y + 60;
-  text("合計: ¥" + total.toLocaleString(), x + 20, yy);
-  yy += 25;
-  text("平均満足度: " + avgS, x + 20, yy);
-  yy += 25;
-  text("平均価値度: " + avgV, x + 20, yy);
-
-  yy += 35;
-  text("支出一覧", x + 20, yy);
-  yy += 20;
-
-  textSize(12);
-  for (let r of data) {
-    text(r.name + "  ¥" + r.amount.toLocaleString(), x + 20, yy);
-    yy += 18;
-  }
-}
-
-//------------------------------------------------------
-// 凡例
-//------------------------------------------------------
-function drawLegendPanel() {
-  const x = 860, y = 350, w = 320, h = 200;
-
-  fill(18, 10, 25);
-  rect(x, y, w, h, 10);
-
-  fill(0, 0, 90);
-  textSize(14);
-  text("Encoding", x + 20, y + 15);
-
-  let yy = y + 45;
-
-  // 色相
-  text("色相 — 満足度", x + 20, yy);
-  yy += 18;
-  for (let i = 0; i < 5; i++) {
-    fill(map(i, 0, 4, 0, 120), 60, 90);
-    rect(x + 20 + i * 25, yy, 20, 12, 3);
-  }
-  yy += 25;
-
-  // 透明度
-  fill(0, 0, 90);
-  text("透明度 — 後悔度", x + 20, yy);
-  yy += 18;
-  for (let i = 0; i < 5; i++) {
-    fill(200, 40, 90, map(i, 0, 4, 255, 60));
-    rect(x + 20 + i * 25, yy, 20, 12, 3);
-  }
-  yy += 25;
-
-  // 形状
-  fill(0, 0, 90);
-  text("形状 — 価値観一致度", x + 20, yy);
-  yy += 30;
-
-  let xx = x + 40;
-  for (let m = 1; m <= 5; m++) {
-    let s = generateShape(10, m);
-    fill(120, 40, 90);
-    beginShape();
-    for (let p of s) vertex(xx + p.x, yy + p.y);
-    endShape(CLOSE);
-    xx += 30;
-  }
-}
-
-//------------------------------------------------------
-// 月別比較サマリー
-//------------------------------------------------------
-function drawCompareSummaryPanel() {
-  const x = 860, y = 70, w = 320, h = 260;
-
-  textAlign(LEFT, TOP);
-
-  fill(18, 10, 18);
-  rect(x, y, w, h, 10);
-
-  fill(0, 0, 90);
-  textSize(18);
-  text("月別比較", x + 20, y + 20);
-
-  let cur = calcStats(monthlyData[selectedCurrentMonth]);
-  let past = calcStats(monthlyData[selectedCompareMonth]);
-
-  let yy = y + 60;
-  textSize(14);
-
-  text("合計金額: ¥" + cur.total.toLocaleString(), x + 20, yy);
-  yy += 25;
-
-  text("支出件数: " + cur.count, x + 20, yy);
-  yy += 25;
-
-  text("平均満足度: " + cur.avgS.toFixed(1), x + 20, yy);
-  yy += 25;
-
-  text("平均後悔度: " + cur.avgR.toFixed(1), x + 20, yy);
-  yy += 25;
-
-  text("価値観一致度: " + cur.avgV.toFixed(1), x + 20, yy);
-}
-//------------------------------------------------------
-// 統計計算（比較用）
-//------------------------------------------------------
-function calcStats(arr) {
-  let total = arr.reduce((s, r) => s + r.amount, 0);
-  let n = arr.length;
-
-  let avgS = n ? arr.reduce((s, r) => s + r.satis, 0) / n : 0;
-  let avgR = n ? arr.reduce((s, r) => s + r.regret, 0) / n : 0;
-  let avgV = n ? arr.reduce((s, r) => s + r.value_match, 0) / n : 0;
-
-  return { total, count: n, avgS, avgR, avgV };
-}
-
-//------------------------------------------------------
-// マウス操作（タブ切替 & バブルドラッグ）
-//------------------------------------------------------
-function mousePressed() {
-  // タブクリック
-  for (let t of tabs) {
-    if (
-      mouseX >= t._x && mouseX <= t._x + t._w &&
-      mouseY >= t._y && mouseY <= t._y + t._h
-    ) {
-      screen = t.id;
-      updateInputVisibility();
-      return;
+    let offsetG = mainCanvasScrollY % 40;
+    for (let gx = 20; gx < width; gx += 40) {
+      for (let gy = 90 + offsetG; gy < height; gy += 40) {
+        point(gx, gy);
+      }
     }
   }
 
-  // バブルドラッグ開始（可視化画面のみ）
-  if (screen === "visual") {
+  if (currentScreen === "input") drawInputscreen();
+  else if (currentScreen === "visual") drawVisualscreen();
+  else if (currentScreen === "compare") drawComparescreen();
+
+  drawHeader();
+}
+
+//------------------------------------------------------
+// ヘッダー描画
+//------------------------------------------------------
+function drawHeader() {
+  push();
+  noStroke();
+  fill(16, 17, 34);
+  rect(0, 0, width, 70);
+  stroke(28, 31, 58);
+  strokeWeight(1);
+  line(0, 70, width, 70);
+
+  fill(255);
+  textSize(22);
+  textAlign(LEFT, CENTER);
+  text("psybudget", 30, 35);
+
+  fill(24, 26, 50);
+  stroke(40, 44, 80);
+  rect(160, 20, 130, 30, 6);
+  noStroke();
+  fill(255);
+  textSize(13);
+  textAlign(LEFT, CENTER);
+  text("2026年 " + selectedCurrentMonth + "月", 175, 35);
+  fill(140, 145, 170);
+  text("▼", 265, 36);
+
+  let tx = 320;
+  for (let t of tabs) {
+    let active = (currentScreen === t.id);
+    if (active) {
+      fill(23, 25, 48);
+      stroke(78, 71, 188);
+      rect(tx, 18, 95, 34, 6);
+      noStroke();
+      fill(255);
+    } else {
+      noStroke();
+      fill(110, 115, 145);
+    }
+    textSize(14);
+    textAlign(CENTER, CENTER);
+    text(t.label, tx + 47, 35);
+    tx += 110;
+  }
+
+  fill(85, 90, 120);
+  textSize(12);
+  textAlign(RIGHT, CENTER);
+  text("心理的価値の可視化", width - 30, 35);
+
+  if (currentMonthDropdownOpen) {
+    drawDropdownMenu(160, 52, 130, 12, (v) => {
+      selectedCurrentMonth = v;
+      buildBubblesFromCurrent();
+      currentMonthDropdownOpen = false;
+    });
+  }
+  pop();
+}
+
+//------------------------------------------------------
+// 1. 支出入力画面
+//------------------------------------------------------
+function drawInputscreen() {
+  noStroke();
+  fill(255);
+  textSize(22);
+  textAlign(LEFT, TOP);
+  text("支出を編集", 30, 110);
+
+  textSize(13);
+  fill(120, 125, 150);
+  text("項目名", 30, 165);
+  drawCustomInputBase(30, 190, 370, 40);
+
+  text("金額 (¥)", 30, 255);
+  drawCustomInputBase(30, 280, 175, 40);
+
+  text("カテゴリ", 225, 255);
+  drawCustomDropdown(225, 280, 175, 40, selectedCategory);
+
+  drawFigmaSliders();
+
+  let isHoverButton = (mouseX >= 30 && mouseX <= 400 && mouseY >= 640 && mouseY <= 682);
+  fill(isHoverButton ? 95 : 78, isHoverButton ? 88 : 71, isHoverButton ? 215 : 188);
+  noStroke();
+  rect(30, 640, 370, 42, 8);
+  fill(255);
+  textSize(15);
+  textAlign(CENTER, CENTER);
+  text("支出を追加", 215, 661);
+
+  fill(16, 17, 34);
+  stroke(28, 31, 58);
+  rect(440, 100, 810, 585, 12);
+
+  noStroke();
+  fill(255);
+  textSize(18);
+  textAlign(LEFT, TOP);
+  text("今月の支出", 470, 130);
+
+  let data = monthlyData[selectedCurrentMonth] || [];
+  let total = data.reduce((s, r) => s + r.amount, 0);
+  fill(90, 100, 160);
+  textSize(13);
+  text(data.length + " 件  •  ¥" + total.toLocaleString(), 580, 134);
+
+  push();
+  let ly = 180 + rightPanelScrollY;
+  let viewMin = 175;
+  let viewMax = 665;
+  
+  let totalListHeight = data.length * 98;
+  rightPanelMaxScroll = min(0, (viewMax - viewMin) - totalListHeight - 20);
+
+  for (let r of data) {
+    if (ly + 85 >= viewMin && ly <= viewMax) {
+      fill(21, 23, 45);
+      stroke(32, 36, 68);
+      rect(470, ly, 725, 85, 8);
+
+      let c = getFigmaColor(r.satis, r.regret);
+      fill(red(c), green(c), blue(c), 30);
+      stroke(c);
+      strokeWeight(1.5);
+      ellipse(515, ly + 42, 48, 48);
+      
+      noStroke();
+      fill(c);
+      textSize(11);
+      textAlign(CENTER, CENTER);
+      text(r.category, 515, ly + 42);
+
+      fill(255);
+      textSize(15);
+      textAlign(LEFT, TOP);
+      text(r.name, 555, ly + 22);
+      fill(120, 125, 150);
+      textSize(13);
+      text("¥" + r.amount.toLocaleString(), 555, ly + 46);
+
+      textAlign(CENTER, TOP);
+      fill(90, 95, 120);
+      textSize(11);
+      text("満足", 720, ly + 24); text("後悔", 765, ly + 24); text("価値", 810, ly + 24);
+      fill(255);
+      textSize(14);
+      text(r.satis, 720, ly + 44); text(r.regret, 765, ly + 44); text(r.value_match, 810, ly + 44);
+
+      fill(28, 30, 56);
+      stroke(45, 50, 85);
+      rect(1100, ly + 26, 80, 32, 6);
+      noStroke();
+      fill(200, 100, 100);
+      textSize(11);
+      textAlign(CENTER, CENTER);
+      text("右クリ削除", 1140, ly + 42);
+    }
+    ly += 98;
+  }
+  pop();
+
+  if (totalListHeight > (viewMax - viewMin)) {
+    let barTrackHeight = viewMax - viewMin;
+    let barHeight = map(barTrackHeight, 0, totalListHeight, 30, barTrackHeight);
+    let barY = map(rightPanelScrollY, 0, rightPanelMaxScroll, viewMin, viewMin + barTrackHeight - barHeight);
+    
+    fill(35, 40, 70);
+    noStroke();
+    rect(1225, viewMin, 8, barTrackHeight, 4); 
+    fill(90, 95, 140);
+    rect(1225, barY, 8, barHeight, 4);        
+  }
+
+  if (categoryDropdownOpen) {
+    let cats = ["交通費","食費","娯楽","衣類","医療","教育","飲料","その他"];
+    drawListDropdown(225, 322, 175, cats);
+  }
+}
+
+// ★追加する瞬間に全角を半角数字へ一括安全クレンジングする関数
+function onAddRecord() {
+  let nameVal = overlayNameInput.value().trim();
+  
+  // 金額文字を取得
+  let rawAmount = overlayAmountInput.value();
+  // 全角数字を半角数字に変換する処理
+  let cleanAmount = rawAmount.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+  // 数字以外の文字（¥やカンマなど）を徹底除去
+  cleanAmount = cleanAmount.replace(/[^0-9]/g, '');
+  let amountVal = Number(cleanAmount) || 0;
+  
+  const uniqueId = "id_" + Math.random().toString(36).substr(2, 9) + "_" + Date.now();
+  let finalName = nameVal === "" ? "未分類の支出" : nameVal;
+
+  const r = {
+    id: uniqueId,
+    name: finalName,
+    amount: amountVal,
+    category: selectedCategory,
+    satis: selectedSatis,
+    regret: selectedRegret,
+    value_match: selectedValueMatch
+  };
+
+  if (!monthlyData[selectedCurrentMonth]) monthlyData[selectedCurrentMonth] = [];
+  monthlyData[selectedCurrentMonth].push(r);
+  buildBubblesFromCurrent();
+
+  // フォームクリア
+  overlayNameInput.value("");
+  overlayAmountInput.value("");
+  rightPanelScrollY = 0; 
+  
+  localStorage.setItem("kakeiboData_figma_overlay_v2", JSON.stringify(monthlyData));
+  currentScreen = "visual";
+  updateInputVisibility();
+}
+
+//------------------------------------------------------
+// 2. 可視化画面
+//------------------------------------------------------
+function drawVisualscreen() {
+  push();
+  translate(0, mainCanvasScrollY);
+
+  noStroke();
+  fill(140, 145, 170);
+  textSize(13);
+  textAlign(LEFT, TOP);
+  text("💡 タグを自由にドラッグして配置できます (右クリックで削除)  上下ホイール・ドラッグでスクロール可能", 30, 95 - mainCanvasScrollY);
+
+  bubbles.sort((a, b) => a.data.regret - b.data.regret);
+  for (let b of bubbles) {
+    drawFigmaBubble(b);
+  }
+  pop();
+
+  drawStandaloneLegendPanel();
+  drawMainScrollBar();
+}
+
+//------------------------------------------------------
+// 3. 月別比較画面
+//------------------------------------------------------
+function drawComparescreen() {
+  noStroke();
+  fill(16, 18, 36);
+  rect(0, 71, width, 50);
+  stroke(28, 31, 58);
+  line(0, 121, width, 121);
+
+  noStroke();
+  fill(110, 115, 145);
+  textSize(14);
+  textAlign(LEFT, CENTER);
+  text("2026年 " + selectedCurrentMonth + "月 現在  vs ", 30, 96);
+
+  fill(24, 26, 50);
+  stroke(40, 44, 80);
+  rect(210, 81, 120, 28, 6);
+  noStroke();
+  fill(255);
+  textSize(12);
+  text("2026年 " + selectedCompareMonth + "月", 225, 95);
+  fill(110, 115, 145);
+  text("▼", 305, 95);
+
+  fill(100, 95, 235);
+  ellipse(880, 96, 8, 8);
+  fill(255); textSize(12); text("現在月", 895, 96);
+  
+  stroke(100, 105, 130); noFill(); rect(960, 90, 12, 11, 2);
+  noStroke(); fill(130, 135, 160); text("比較対象月（ハッキリ点景）", 980, 96);
+
+  push();
+  translate(0, mainCanvasScrollY);
+
+  let past = monthlyData[selectedCompareMonth] || [];
+  const savedPositions = JSON.parse(localStorage.getItem("bubblePositionsFigmaOverlay_v2")) || {};
+
+  if (selectedCurrentMonth === selectedCompareMonth) {
     for (let b of bubbles) {
-      let d = dist(mouseX, mouseY, b.x, b.y);
-      if (d < b.size) {
-        draggingBubble = b;
-        b.offsetX = b.x - mouseX;
-        b.offsetY = b.y - mouseY;
-        break;
+      drawFigmaBubbleGhost(b.shape, b.x, b.y, b.baseColor, b.data);
+    }
+  } else {
+    for (let i = 0; i < past.length; i++) {
+      let r = past[i];
+      let seed = 0; for (let char of r.id) seed += char.charCodeAt(0);
+      let cx = 450 + cos(map(seed % 100, 0, 100, 0, TWO_PI)) * 150;
+      let cy = 400 + sin(map(seed % 100, 0, 100, 0, TWO_PI)) * 150;
+      if (savedPositions[r.id]) { cx = savedPositions[r.id].x; cy = savedPositions[r.id].y; }
+
+      let size = sqrt(r.amount) * 0.8 + 35;
+      let shape = generateShape(size, r.value_match);
+      let c = getFigmaColor(r.satis, r.regret);
+      drawFigmaBubbleGhost(shape, cx, cy, c, r);
+    }
+  }
+
+  for (let b of bubbles) {
+    drawFigmaBubble(b);
+  }
+  pop();
+
+  drawFigmaCombinedPanel();
+  drawMainScrollBar();
+
+  if (compareMonthDropdownOpen) {
+    drawDropdownMenu(210, 111, 120, 12, (v) => {
+      selectedCompareMonth = v;
+      compareMonthDropdownOpen = false;
+    });
+  }
+}
+
+function drawMainScrollBar() {
+  let trackTop = 130;
+  let trackHeight = height - 150;
+  let barHeight = map(height, 0, CANVAS_VIRTUAL_HEIGHT, 50, trackHeight);
+  let maxScroll = height - CANVAS_VIRTUAL_HEIGHT;
+  let barY = map(mainCanvasScrollY, 0, maxScroll, trackTop, trackTop + trackHeight - barHeight);
+
+  fill(35, 40, 70, 150);
+  noStroke();
+  rect(1262, trackTop, 8, trackHeight, 4); 
+  fill(90, 95, 140, 200);
+  rect(1262, barY, 8, barHeight, 4);        
+}
+
+//------------------------------------------------------
+// タグ（バブル）の描画
+//------------------------------------------------------
+function drawFigmaBubble(b) {
+  push();
+  noStroke();
+  let c = b.baseColor;
+  for (let s = 3; s > 0; s--) {
+    fill(red(c), green(c), blue(c), 8 - s * 2);
+    beginShape();
+    for (let p of b.shape) vertex(b.x + p.x * (1 + s * 0.05), b.y + p.y * (1 + s * 0.05));
+    endShape(CLOSE);
+  }
+
+  fill(16, 18, 35, 230); 
+  beginShape();
+  for (let p of b.shape) vertex(b.x + p.x, b.y + p.y);
+  endShape(CLOSE);
+
+  fill(red(c), green(c), blue(c), 38); 
+  noStroke();
+  beginShape();
+  for (let p of b.shape) vertex(b.x + p.x, b.y + p.y);
+  endShape(CLOSE);
+
+  noFill();
+  stroke(c);
+  strokeWeight(2.5);
+  beginShape();
+  for (let p of b.shape) vertex(b.x + p.x, b.y + p.y);
+  endShape(CLOSE);
+
+  noStroke();
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(14);
+  text(b.data.name, b.x, b.y - 10);
+
+  fill(150, 155, 175);
+  textSize(11);
+  text("¥" + b.data.amount.toLocaleString() + "\n" + b.data.category, b.x, b.y + 16);
+  pop();
+}
+
+function drawFigmaBubbleGhost(shapePoints, x, y, baseColor, data) {
+  fill(red(baseColor), green(baseColor), blue(baseColor), 40);
+  stroke(red(baseColor), green(baseColor), blue(baseColor), 180);
+  strokeWeight(2);
+  beginShape(POINTS); 
+  for (let p of shapePoints) vertex(x + p.x, y + p.y);
+  endShape(CLOSE);
+
+  noStroke();
+  fill(200, 205, 230, 180);
+  textAlign(CENTER, CENTER);
+  textSize(11);
+  text(data.name + "\n¥" + data.amount.toLocaleString(), x, y);
+}
+
+//------------------------------------------------------
+// 指標見本
+//------------------------------------------------------
+function drawSampleTag(x, y, isSafe) {
+  push();
+  let size = 32;
+  let c = isSafe ? color(30, 240, 100) : color(255, 40, 60);
+
+  if (isSafe) {
+    noStroke();
+    fill(red(c), green(c), blue(c), 15);
+    ellipse(x, y, size * 2 + 8, size * 2 + 8);
+    fill(16, 18, 35);
+    stroke(c);
+    strokeWeight(2);
+    ellipse(x, y, size * 2, size * 2);
+  } else {
+    let radius = 2;
+    noStroke();
+    fill(red(c), green(c), blue(c), 15);
+    rect(x - size - 4, y - size - 4, size * 2 + 8, size * 2 + 8, radius + 2);
+    fill(16, 18, 35);
+    stroke(c);
+    strokeWeight(2);
+    rect(x - size, y - size, size * 2, size * 2, radius);
+  }
+
+  noStroke();
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(11);
+  text(isSafe ? "安全" : "危険", x, y - 5);
+  
+  fill(130, 135, 160);
+  textSize(9);
+  text(isSafe ? "5 / 1 / 5" : "1 / 5 / 1", x, y + 11);
+  pop();
+}
+
+function drawStandaloneLegendPanel() {
+  let sx = 890, sy = 140, sw = 350, sh = 260;
+  fill(16, 17, 34); stroke(28, 31, 58); rect(sx, sy, sw, sh, 12);
+  
+  noStroke(); fill(255); textSize(14); textAlign(LEFT, TOP);
+  text("支出タグの指標見本", sx + 25, sy + 22);
+  fill(110, 115, 140); textSize(11);
+  text("バブルの「色」と「形状」の基準値です。", sx + 25, sy + 44);
+  
+  drawSampleTag(sx + 65, sy + 120, true); 
+  fill(255); textSize(12); textAlign(LEFT, CENTER);
+  text("安全な支出 (満足5/後悔1/価値5)", sx + 115, sy + 120);
+
+  drawSampleTag(sx + 65, sy + 195, false); 
+  text("危険な支出 (満足1/後悔5/価値1)", sx + 115, sy + 195);
+}
+
+function drawFigmaCombinedPanel() {
+  let sx = 890, sy = 140, sw = 350, sh = 555;
+  fill(16, 17, 34); stroke(28, 31, 58); rect(sx, sy, sw, sh, 12);
+
+  noStroke(); fill(255); textSize(13); textAlign(LEFT, TOP);
+  text("指標見本 (満足度 / 後悔度 / 一致度)", sx + 25, sy + 20);
+  
+  drawSampleTag(sx + 55, sy + 75, true);
+  fill(140, 145, 170); textSize(11); textAlign(LEFT, CENTER);
+  text("安全な支出\n(理想)", sx + 100, sy + 75);
+
+  drawSampleTag(sx + 225, sy + 75, false);
+  fill(140, 145, 170); textSize(11); textAlign(RIGHT, CENTER);
+  text("危険な支出\n(要見直し)", sx + 325, sy + 75);
+
+  stroke(28, 31, 58); line(sx + 20, sy + 130, sx + sw - 20, sy + 130);
+
+  noStroke(); fill(110, 115, 140); textSize(12); textAlign(LEFT, TOP); text("統計比較", sx + 25, sy + 150);
+  fill(255); textSize(15); text("2026-" + (selectedCurrentMonth<10?"0":"")+selectedCurrentMonth + " vs 2026-" + (selectedCompareMonth<10?"0":"")+selectedCompareMonth, sx + 25, sy + 172);
+
+  let cur = calcStats(monthlyData[selectedCurrentMonth]);
+  let pas = calcStats(monthlyData[selectedCompareMonth]);
+
+  let items = [
+    { label: "合計金額 (¥)", cur: "¥" + cur.total.toLocaleString(), diff: cur.total - pas.total, isPrice: true },
+    { label: "支出件数", cur: cur.count + " 件", diff: cur.count - pas.count },
+    { label: "平均満足度", cur: cur.avgS.toFixed(1), diff: cur.avgS - pas.avgS },
+    { label: "平均後悔度", cur: cur.avgR.toFixed(1), diff: cur.avgR - pas.avgR },
+    { label: "価値観一致度", cur: cur.avgV.toFixed(1), diff: cur.avgV - pas.avgV }
+  ];
+
+  let ry = sy + 220;
+  for (let it of items) {
+    fill(130, 135, 160); textSize(13); textAlign(LEFT, TOP); text(it.label, sx + 25, ry);
+    fill(255); textAlign(RIGHT, TOP); text(it.cur, sx + 210, ry);
+
+    let diffSign = it.diff >= 0 ? "+" : "";
+    let diffStr = it.isPrice ? (it.diff >= 0 ? "+¥" + it.diff.toLocaleString() : "-¥" + abs(it.diff).toLocaleString()) : diffSign + it.diff.toFixed(it.isPrice?0:1);
+    
+    if (it.diff > 0) fill(235, 94, 85);      
+    else if (it.diff < 0) fill(110, 220, 126); 
+    else fill(120);
+    
+    text(it.diff === 0 ? "0.0" : diffStr, sx + 325, ry);
+    ry += 42;
+  }
+}
+
+function drawCustomInputBase(x, y, w, h) {
+  fill(18, 20, 38);
+  stroke(35, 40, 75);
+  strokeWeight(1);
+  rect(x, y, w, h, 6);
+}
+
+function drawCustomDropdown(x, y, w, h, currentVal) {
+  fill(18, 20, 38); stroke(35, 40, 75); rect(x, y, w, h, 6);
+  noStroke(); fill(255); textSize(14); textAlign(LEFT, CENTER); text(currentVal, x + 12, y + h/2);
+  fill(110, 115, 140); text("▼", x + w - 24, y + h/2);
+}
+
+function drawFigmaSliders() {
+  drawSegmentedRow("満足度", 30, 355, selectedSatis, "不満", "満足", true, color(235, 94, 85), color(110, 220, 126));
+  drawRegretRow("後悔度", 30, 440, selectedRegret, "後悔なし", "後悔大");
+  drawValueMatchRow("価値観との一致度", 30, 525, selectedValueMatch, "低い", "高い");
+}
+
+function drawSegmentedRow(label, x, y, currentVal, leftT, rightT, isCircle, minC, maxC) {
+  noStroke(); fill(255); textSize(14); textAlign(LEFT, TOP); text(label, x, y);
+  textSize(11); fill(80, 85, 110); text(currentVal + " / 5", x + 340, y + 2);
+  for (let i = 1; i <= 5; i++) {
+    let bx = x + (i - 1) * 48; let by = y + 25;
+    let active = (currentVal === i);
+    let itemColor = lerpColor(minC, maxC, map(i, 1, 5, 0, 1));
+    if (active) { fill(itemColor); stroke(255, 200); strokeWeight(1.5); } 
+    else { fill(18, 20, 38); stroke(35, 40, 70); strokeWeight(1); }
+    ellipse(bx + 18, by + 18, 34, 34);
+    noStroke(); fill(active ? 15 : 130); textSize(13); textAlign(CENTER, CENTER); text(i, bx + 18, by + 17 - mainCanvasScrollY * 0);
+  }
+  fill(70, 75, 100); textSize(11); textAlign(LEFT, TOP); text(leftT, x, y + 64);
+  textAlign(RIGHT, TOP); text(rightT, x + 230, y + 64);
+}
+
+function drawRegretRow(label, x, y, currentVal, leftT, rightT) {
+  noStroke(); fill(255); textSize(14); textAlign(LEFT, TOP); text(label, x, y);
+  textSize(11); fill(80, 85, 110); text(currentVal + " / 5", x + 340, y + 2);
+  
+  let baseGray = color(50, 52, 70);
+  let neonPurple = color(160, 40, 255); 
+  
+  for (let i = 1; i <= 5; i++) {
+    let bx = x + (i - 1) * 48; let by = y + 25;
+    let active = (currentVal === i);
+    let colorFactor = map(i, 1, 5, 0.15, 1.0);
+    let itemColor = lerpColor(baseGray, neonPurple, colorFactor);
+    
+    if (active) { fill(itemColor); stroke(255); strokeWeight(1.5); } 
+    else { fill(18, 20, 38); stroke(itemColor); strokeWeight(1); }
+    
+    ellipse(bx + 18, by + 18, 34, 34);
+    noStroke(); fill(active ? 255 : 140); textSize(13); textAlign(CENTER, CENTER); text(i, bx + 18, by + 17);
+  }
+  fill(70, 75, 100); textSize(11); textAlign(LEFT, TOP); text(leftT, x, y + 64);
+  textAlign(RIGHT, TOP); text(rightT, x + 230, y + 64);
+}
+
+function drawValueMatchRow(label, x, y, currentVal, leftT, rightT) {
+  noStroke(); fill(255); textSize(14); textAlign(LEFT, TOP); text(label, x, y);
+  textSize(11); fill(80, 85, 110); text(currentVal + " / 5", x + 340, y + 2);
+  
+  let themeColor = color(78, 71, 188);
+  
+  for (let i = 1; i <= 5; i++) {
+    let bx = x + (i - 1) * 48; let by = y + 25;
+    let active = (currentVal === i);
+    
+    if (active) { fill(themeColor); stroke(255); strokeWeight(1.5); } 
+    else { fill(18, 20, 38); stroke(45, 50, 90); strokeWeight(1); }
+    
+    let cornerRadius = map(i, 1, 5, 2, 17);
+    rect(bx, by, 34, 34, cornerRadius);
+    
+    noStroke(); fill(active ? 255 : 140); textSize(13); textAlign(CENTER, CENTER); text(i, bx + 18, by + 17);
+  }
+  fill(70, 75, 100); textSize(11); textAlign(LEFT, TOP); text(leftT, x, y + 64);
+  textAlign(RIGHT, TOP); text(rightT, x + 230, y + 64);
+}
+
+function calcStats(arr) {
+  let total = arr.reduce((s, r) => s + r.amount, 0);
+  let n = arr.length;
+  let avgS = n ? arr.reduce((s, r) => s + r.satis, 0) / n : 0;
+  let avgR = n ? arr.reduce((s, r) => s + r.regret, 0) / n : 0;
+  let avgV = n ? arr.reduce((s, r) => s + r.value_match, 0) / n : 0;
+  return { total, count: n, avgS, avgR, avgV };
+}
+
+function mouseWheel(event) {
+  if (currentScreen === "input") {
+    if (mouseX >= 440 && mouseX <= 1250 && mouseY >= 100 && mouseY <= 685) {
+      rightPanelScrollY -= event.delta * 0.4;
+      rightPanelScrollY = constrain(rightPanelScrollY, rightPanelMaxScroll, 0);
+      return false; 
+    }
+  } else {
+    let maxScroll = height - CANVAS_VIRTUAL_HEIGHT;
+    mainCanvasScrollY -= event.delta * 0.5;
+    mainCanvasScrollY = constrain(mainCanvasScrollY, maxScroll, 0);
+    return false;
+  }
+}
+
+function drawDropdownMenu(x, y, w, maxM, callback) {
+  fill(20, 22, 45); stroke(40, 45, 85); rect(x, y, w, 220, 6);
+  for (let m = 1; m <= 12; m++) {
+    let iy = y + (m - 1) * 18;
+    if (mouseX >= x && mouseX <= x + w && mouseY >= iy && mouseY <= iy + 18) { fill(40, 45, 90); rect(x, iy, w, 18); }
+    noStroke(); fill(255); textSize(11); textAlign(LEFT, CENTER); text(m + "月", x + 12, iy + 9);
+  }
+}
+
+function drawListDropdown(x, y, w, items) {
+  fill(20, 22, 45); stroke(40, 45, 85); rect(x, y, w, items.length * 24, 6);
+  for (let i = 0; i < items.length; i++) {
+    let iy = y + i * 24;
+    if (mouseX >= x && mouseX <= x + w && mouseY >= iy && mouseY <= iy + 24) { fill(40, 45, 90); rect(x, iy, w, 24); }
+    noStroke(); fill(255); textSize(13); textAlign(LEFT, CENTER); text(items[i], x + 12, iy + 12);
+  }
+}
+
+function mousePressed() {
+  let tx = 320;
+  for (let t of tabs) {
+    if (mouseX >= tx && mouseX <= tx + 95 && mouseY >= 18 && mouseY <= 52) {
+      currentScreen = t.id;
+      categoryDropdownOpen = false; currentMonthDropdownOpen = false; compareMonthDropdownOpen = false;
+      buildBubblesFromCurrent(); 
+      updateInputVisibility(); 
+      return;
+    }
+    tx += 110;
+  }
+
+  if (mouseX >= 160 && mouseX <= 290 && mouseY >= 20 && mouseY <= 50) {
+    currentMonthDropdownOpen = !currentMonthDropdownOpen; return;
+  }
+  if (currentMonthDropdownOpen) {
+    if (mouseX >= 160 && mouseX <= 290 && mouseY >= 52 && mouseY <= 52 + 220) {
+      let m = floor((mouseY - 52) / 18) + 1;
+      if (m >= 1 && m <= 12) { selectedCurrentMonth = m; buildBubblesFromCurrent(); currentMonthDropdownOpen = false; }
+      return;
+    }
+    currentMonthDropdownOpen = false;
+  }
+
+  if (currentScreen=== "compare" && mouseX >= 210 && mouseX <= 330 && mouseY >= 81 && mouseY <= 109) {
+    compareMonthDropdownOpen = !compareMonthDropdownOpen; return;
+  }
+  if (compareMonthDropdownOpen) {
+    if (mouseX >= 210 && mouseX <= 330 && mouseY >= 111 && mouseY <= 111 + 220) {
+      let m = floor((mouseY - 111) / 18) + 1;
+      if (m >= 1 && m <= 12) { selectedCompareMonth = m; compareMonthDropdownOpen = false; }
+      return;
+    }
+    compareMonthDropdownOpen = false;
+  }
+
+  if (currentScreen === "input") {
+    if (mouseX >= 225 && mouseX <= 400 && mouseY >= 280 && mouseY <= 320) { categoryDropdownOpen = !categoryDropdownOpen; return; }
+    if (categoryDropdownOpen) {
+      let cats = ["交通費","食費","娯楽","衣類","医療","教育","飲料","その他"];
+      if (mouseX >= 225 && mouseX <= 400 && mouseY >= 322 && mouseY <= 322 + cats.length*24) {
+        let idx = floor((mouseY - 322) / 24);
+        if (idx >= 0 && idx < cats.length) { selectedCategory = cats[idx]; categoryDropdownOpen = false; }
+        return;
+      }
+      categoryDropdownOpen = false;
+    }
+
+    if (mouseY >= 380 && mouseY <= 414) {
+      for(let i=1; i<=5; i++) { let bx = 30 + (i-1)*48; if(mouseX >= bx && mouseX <= bx+36) selectedSatis = i; }
+    }
+    if (mouseY >= 465 && mouseY <= 499) {
+      for(let i=1; i<=5; i++) { let bx = 30 + (i-1)*48; if(mouseX >= bx && mouseX <= bx+36) selectedRegret = i; }
+    }
+    if (mouseY >= 550 && mouseY <= 584) {
+      for(let i=1; i<=5; i++) { let bx = 30 + (i-1)*48; if(mouseX >= bx && mouseX <= bx+36) selectedValueMatch = i; }
+    }
+
+    if (mouseX >= 30 && mouseX <= 400 && mouseY >= 640 && mouseY <= 682) { onAddRecord(); return; }
+    
+    let data = monthlyData[selectedCurrentMonth] || [];
+    let ly = 180 + rightPanelScrollY;
+    for(let i=0; i<data.length; i++) {
+      if (ly + 85 >= 175 && ly <= 665) {
+        if(mouseX >= 1100 && mouseX <= 1180 && mouseY >= ly + 26 && mouseY <= ly + 58) { showDeletePopup(i); return; }
+      }
+      ly += 98;
+    }
+  }
+
+  if (currentScreen === "visual" || currentScreen === "compare") {
+    let adjustedMouseY = mouseY - mainCanvasScrollY;
+    if (mouseX < 890) {
+      if (mouseButton === RIGHT) {
+        for (let i = 0; i < bubbles.length; i++) {
+          if (dist(mouseX, adjustedMouseY, bubbles[i].x, bubbles[i].y) < bubbles[i].size) { showDeletePopup(i); return false; }
+        }
+      }
+      if (mouseButton === LEFT) {
+        for (let b of bubbles) {
+          if (dist(mouseX, adjustedMouseY, b.x, b.y) < b.size) {
+            draggingBubble = b; b.offsetX = b.x - mouseX; b.offsetY = b.y - adjustedMouseY; break;
+          }
+        }
       }
     }
   }
 }
 
 function mouseDragged() {
-  if (draggingBubble) {
-    draggingBubble.x = mouseX + draggingBubble.offsetX;
-    draggingBubble.y = mouseY + draggingBubble.offsetY;
+  if (draggingBubble) { 
+    draggingBubble.x = mouseX + draggingBubble.offsetX; 
+    draggingBubble.y = (mouseY - mainCanvasScrollY) + draggingBubble.offsetY; 
   }
 }
 
+// （マウスを離したときにFirebaseに送る）
 function mouseReleased() {
-  draggingBubble = null;
+  if (draggingBubble) { 
+    saveBubblePositions(); 
+    draggingBubble = null; 
+  }
+  
+  // 動かして手を離した瞬間にデータを送る
+  saveToFirebase(); 
+}
+
+function showDeletePopup(index) {
+  if (confirm("この支出項目を削除しますか？")) {
+    let removed = bubbles[index];
+    let arr = monthlyData[selectedCurrentMonth];
+    let idx = arr.findIndex(item => item.id === removed.id);
+    if (idx !== -1) arr.splice(idx, 1);
+
+    let savedPositions = JSON.parse(localStorage.getItem("bubblePositionsFigmaOverlay_v2")) || {};
+    if (removed.id && savedPositions[removed.id]) {
+      delete savedPositions[removed.id];
+      localStorage.setItem("bubblePositionsFigmaOverlay_v2", JSON.stringify(savedPositions));
+    }
+    buildBubblesFromCurrent();
+    localStorage.setItem("kakeiboData_figma_overlay_v2", JSON.stringify(monthlyData));
+  }
+  saveToFirebase();
+}
+
+
+
+
+
+// ⭕ 座標情報（x, y）も一緒にFirebaseへ送るように改良した関数
+function saveToFirebase() {
+  if (!window.db || !window.dbRef || !window.dbSet) {
+    console.log("Firebaseがまだ読み込まれていません");
+    return;
+  }
+
+  // 💡ブラウザに保存されている最新のバブル座標データを取ってくる
+  let savedPositions = JSON.parse(localStorage.getItem("bubblePositionsFigmaOverlay_v2")) || {};
+
+  // 💡家計簿データ（monthlyData）をコピーして、中に座標(x, y)を埋め込む処理
+  let detailedMonthlyData = {};
+  for (let m = 1; m <= 12; m++) {
+    detailedMonthlyData[m] = monthlyData[m].map(item => {
+      // この項目のIDに対応する座標があるか探す
+      let pos = savedPositions[item.id] || { x: 0, y: 0 }; 
+      return {
+        ...item,
+        x: pos.x, // 👈 Firebase用のデータにX座標を追加！
+        y: pos.y  // 👈 Firebase用のデータにY座標を追加！
+      };
+    });
+  }
+
+  // 送信したいデータの塊を作る
+  let payload = {
+    updatedAt: new Date().toISOString(),
+    monthlyData: detailedMonthlyData // 💡座標入りのデータに差し替え
+  };
+
+  let userRef = window.dbRef(window.db, 'users/' + userId);
+
+  window.dbSet(userRef, payload)
+    .then(() => {
+      console.log("Firebaseへの自動保存に成功しました！(座標付き) ID: " + userId);
+    })
+    .catch((error) => {
+      console.error("Firebaseへの保存エラー: ", error);
+    });
 }
